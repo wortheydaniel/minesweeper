@@ -4,6 +4,21 @@ Classic Minesweeper for **Windows and Linux**, as a native desktop window with t
 
 > **Status: playable, Linux-tested.** The game is implemented as specified in [`SPEC.md`](SPEC.md) and all automated tests pass. It has been run for real on Linux under a virtual X server: the window opens, the self-test's scripted click plays, and a screenshot of the running window was checked. Physical mouse and keyboard input has not been tried with the finished game (an earlier probe showed Ebitengine delivers all three mouse buttons and keys correctly on X11). **The Windows build compiles but has never been run** — no Windows machine was available — so treat Windows as untested until you try it. CI is written but hasn't run yet. See [SPEC §13](SPEC.md#13-milestones) for what's left.
 
+## Just want to play?
+
+No installing, no building. Download one file and run it:
+
+| Your computer | Download | Then |
+|---|---|---|
+| **Windows** 10 or 11 | [`downloads/minesweeper-windows.exe`](downloads/minesweeper-windows.exe) | Double-click it. If Windows says *"Windows protected your PC"*, click **More info → Run anyway** (the file isn't code-signed). |
+| **Linux** desktop | [`downloads/minesweeper-linux`](downloads/minesweeper-linux) | Right-click → Properties → *Allow executing*, then double-click. Or in a terminal: `chmod +x minesweeper-linux && ./minesweeper-linux` |
+
+On GitHub, open the file and click the **download** button (the arrow icon near the top right of the file view).
+
+Your best times and settings are saved automatically. The Windows file has never been run on a real Windows machine yet — if it doesn't open, please tell me what you see.
+
+For ARM computers, or to build it yourself, see [Building from source](#building-from-source) below.
+
 ## Requirements
 
 **To play**
@@ -25,9 +40,9 @@ Alpine and other musl-based distributions are not supported. There is no Python,
 
 [Go](https://go.dev/dl/) **1.25 or newer** (Go can download the right toolchain itself). No C compiler and no system development packages are needed.
 
-## Quick start
+## Running the release files in detail
 
-Build it (see below) or, once releases exist, download the file for your system from the Releases page. Then:
+The files in [`downloads/`](downloads) are built from this repository (64-bit Intel/AMD only):
 
 **Windows** — double-click `minesweeper-<version>-windows-amd64.exe`. Windows SmartScreen may warn about an unrecognised app because the binary is unsigned: choose *More info → Run anyway*.
 
