@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 — 2026-09-29 |
+| **Status** | Draft v0.3 — 2026-09-29 |
 | **Implementation** | Not started (see [§13 Milestones](#13-milestones)) |
 | **Audience** | Whoever builds or maintains this project. This file is the source of truth: change the spec first, then the code. |
-| **Changes from v0.1** | The browser-based UI was dropped (requirement: the game must not depend on or run in a web browser). It is now a **terminal application**; §3, §4, §6, §7 and §9 were rewritten and the HTTP API and all networking were removed. |
+| **Changes from v0.2** | Dependencies are now allowed *if minimal* and a real window results. The terminal UI is replaced by a **native window** built on one library (Ebitengine), confined to a single package. The terminal design is preserved in git history (commit `659d62f`) as the zero-dependency fallback. §2, §3, §4, §6, §7, §9, §11 were rewritten. v0.1 (browser UI) was dropped earlier. |
 
 Requirement keywords **MUST**, **SHOULD**, **MAY** follow RFC 2119. Every requirement has an ID (`C-1`, `G-4`, …) so tests, commits and reviews can cite it.
 
@@ -13,111 +13,115 @@ Requirement keywords **MUST**, **SHOULD**, **MAY** follow RFC 2119. Every requir
 
 ## 1. Overview
 
-A clone of classic Windows Minesweeper that runs on **Windows and Linux** from a **single downloaded file with nothing else to install**, in the player's terminal, with full mouse support.
+A clone of classic Windows Minesweeper that runs on **Windows and Linux** as a **native desktop window**, from a single downloaded file.
 
 **Goals**
 
-- Faithful classic gameplay: the three standard difficulties, first-click safety, flagging, chording, timer, best times.
-- One self-contained executable per OS. Download, run, play.
-- Small, readable codebase that one person can maintain, with the game rules and the UI logic fully unit-tested.
+- Faithful classic gameplay and look: the three standard difficulties, first-click safety, flagging, chording, LED counters, smiley face, best times.
+- One executable per OS. On Windows nothing else is needed; on Linux only the graphics libraries every desktop already has.
+- A small, readable codebase with the rules and the entire UI (including how it looks) covered by automated tests that need no display.
 
 **Non-goals (v1)**
 
-- A graphical window (see [§3](#3-technology-decision) and [§14](#14-out-of-scope-and-future-work)), a browser UI, multiplayer, online leaderboards, accounts, telemetry, update checks.
+- Browser or terminal UIs, multiplayer, online leaderboards, accounts, telemetry, update checks.
 - Solver, hints, or no-guess board generation.
-- Saving an in-progress game across restarts, installers, code signing, localisation beyond English.
+- Sound, saving an in-progress game, installers, code signing, localisation beyond English.
 
 ---
 
 ## 2. Hard constraints
 
-These come straight from the brief and override every other preference in this document.
-
 | ID | Constraint |
 |---|---|
-| C-1 | The game **MUST** run on Windows 10 version 1809 or newer (amd64, arm64) and Linux (amd64, arm64). |
-| C-2 | The end user **MUST NOT** need to install anything: no interpreter, VM, framework, shared library, or installer. The only prerequisite is a terminal, which both operating systems already provide. |
-| C-3 | The project **MUST** use no third-party code. `go.mod` has **zero** `require` lines; the standard library only. Building requires only the Go toolchain. |
-| C-4 | Release binaries **MUST** be statically linked (`CGO_ENABLED=0`) so they do not depend on the user's glibc or any system library. |
-| C-5 | The game **MUST NOT** open any network socket (listening or outgoing), send telemetry, or check for updates. It is a purely local program. |
+| C-1 | The game **MUST** run as a native window on Windows 10+ (amd64, arm64) and Linux (amd64, arm64; X11 or Wayland-with-XWayland session). |
+| C-2 | **Windows:** the end user **MUST NOT** need to install anything. **Linux:** the end user **MUST NOT** need to install anything beyond the X11 and OpenGL client libraries that ship with any desktop distribution ([§3](#3-technology-decision) lists them). No interpreter, VM, or framework on either OS. |
+| C-3 | Third-party code is **restricted to one direct dependency, Ebitengine** (`github.com/hajimehoshi/ebiten/v2`), plus the modules it needs, under the policy in [§3.2](#32-dependency-policy). Everything else is the Go standard library. |
+| C-4 | Building **MUST NOT** require a C compiler, C headers, or system development packages: release binaries are built with `CGO_ENABLED=0` and cross-compile from any OS. Only the Go toolchain is needed. |
+| C-5 | The game **MUST NOT** open any network socket, send telemetry, or check for updates. |
 | C-6 | The game **MUST NOT** depend on, launch, or render in a web browser. |
 
 ---
 
 ## 3. Technology decision
 
-**Decision:** **Go** (minimum 1.22, standard library only) producing one static binary per OS, with a **terminal UI** (colour, keyboard and full mouse support).
+**Decision:** **Go** (see [B-1](#build-and-release-m0--m5) for the required version) with **Ebitengine v2** as the only windowing/input dependency. The game draws its own frames into a plain in-memory image (`*image.RGBA`, standard library) and Ebitengine only opens the window, delivers input, and shows that image.
 
-### Why a terminal UI?
+### 3.1 What was verified before choosing this
 
-With no browser allowed (C-6) and no third-party code (C-3), the only display surface left that exists on every Windows and Linux machine is the terminal. A native window is technically possible without libraries, but only by hand-writing two separate window-system backends (Win32 through `syscall`, and the X11 wire protocol over a Unix socket, which also leaves Wayland-only systems unsupported). That is substantially more platform code than the terminal layer, and the Windows half cannot be tested from a Linux development machine. It is recorded as a possible future front-end ([§14](#14-out-of-scope-and-future-work)); the rules engine is I/O-free ([A-1](#4-architecture)) so adding it later would not touch the rules.
+Throwaway probe programs, run on the development machine (Linux + Xvfb X server), with Ebitengine v2.10.4:
 
-### Why Go?
+- **Builds with `CGO_ENABLED=0` for all four targets** (`linux`/`windows` × `amd64`/`arm64`) from a Linux machine — no C compiler, no headers. Windows probes built as GUI-subsystem programs (`-H windowsgui`). Binary sizes were roughly **9–13 MB**.
+- **Only five modules are compiled in:** `ebiten/v2`, `ebitengine/purego`, `ebitengine/hideconsole`, `golang.org/x/sys`, `golang.org/x/sync` — identical for the Linux and Windows builds. (A larger set appears in `go list -m all` but is not built into the binary.)
+- **It works as a real window on Linux.** Under Xvfb the window opened and rendered; reading pixels back from the X server showed exactly the colours drawn; **injected X11 mouse events — left, middle and right button — and a key press arrived at the correct coordinates.** That is everything the game needs from input, including the middle button for chording.
+- **Linux runtime needs:** the CGO-free binary is still dynamically linked to the system loader (**glibc**), and at runtime loads `libGL`, `libX11`, `libXcursor`, `libXrandr`, `libXinerama`, `libXi` and `libXxf86vm` (plus their own dependencies). These are present on desktop installs and absent on minimal/server installs.
+- **No display → a clean error**, not a crash: `no window system is available …`, exit code 1.
+- **Requires a very new Go:** Ebitengine v2.10.4 declares `go 1.25.0`.
 
-- **Cross-compiles from any machine with no cgo:** `GOOS=windows go build` just works, so a contributor on Linux can produce the Windows `.exe`.
-- **Static, dependency-free, small output.**
-- **Everything needed is in the standard library** except a terminal package — which Go does not have, so a small `internal/term` package makes the raw system calls itself (see below).
-- Strong typing, native fuzzing and `go test` make the rules and the input decoder easy to keep correct.
+**Not verified** (and therefore scheduled as risks, [§10](#10-non-functional-requirements-and-risks)): running on Windows (compiled only — no Windows or Wine here), Wayland-only systems, HiDPI scaling, idle CPU use, musl-based distros.
 
-### What was verified before choosing this
+### 3.2 Dependency policy
 
-A throwaway probe program (stdlib only) that switches the terminal to raw mode, enables alternate screen and SGR mouse reporting, reads the window size and reads input:
+| ID | Requirement |
+|---|---|
+| D-1 | `go.mod` **MUST** have exactly one direct `require`: Ebitengine, pinned to an exact version. `go.sum` is committed. |
+| D-2 | The set of third-party modules *compiled into* any of the four targets **MUST** be a subset of an allowlist kept in `tools/checkdeps` (initially the five modules listed above). CI fails if an upgrade or change adds one. |
+| D-3 | **Confinement:** only `internal/shell` and `cmd/minesweeper` may import Ebitengine, directly or otherwise. `engine`, `store` and `ui` compile and test without it. A test enforces this ([T-8](#11-testing-strategy)). |
+| D-4 | Upgrading Ebitengine is a deliberate, single-purpose change: bump the pin, re-run `tools/checkdeps`, re-run the full acceptance checklist ([§12](#12-acceptance-checklist)) on both OSes. |
+| D-5 | Because of D-3, replacing Ebitengine later means rewriting only `internal/shell` (target: a few hundred lines). |
 
-- **Built for all four targets** (`linux`/`windows` × `amd64`/`arm64`) with `CGO_ENABLED=0` from a Linux machine; `go vet` clean for Linux and Windows. Sizes were **1.4–1.5 MB** each.
-- **Linux run for real inside a pseudo-terminal:** raw mode entered; window size read correctly; SGR mouse escape sequences (left and right button presses) arrived intact; **Ctrl+C arrived as an ordinary key byte** (`0x03`) rather than killing the process; alternate screen and mouse mode were switched on and off; **the terminal's original settings were fully restored** on a normal quit, on Ctrl+C-as-key, and on `SIGTERM`; and stdin that is not a terminal was refused with exit code 2.
-- **Windows was compiled and vetted but not executed** — there is no Windows or Wine in the development environment. The Windows path (virtual-terminal input/output through `kernel32` calls) is the project's biggest unverified risk and is scheduled first ([R-1](#10-non-functional-requirements-and-risks), [§13 M2](#13-milestones)).
-
-### Alternatives considered
+### 3.3 Alternatives considered
 
 | Option | Verdict | Reason |
 |---|---|---|
-| Browser UI (local web server or HTML file) | Rejected | Violates C-6. Was the v0.1 design. |
-| Python + tkinter | Rejected | Needs an interpreter (not on Windows by default); `tkinter` is a separate package on many Linux distros. Violates C-2. |
-| Java / Swing | Rejected | Needs a JRE. Violates C-2. |
-| .NET | Rejected | WinForms is Windows-only; cross-platform GUI needs Avalonia (third-party); self-contained bundles are large. |
-| Rust / C / C++ with a GUI library | Rejected | GUI libs (egui, SDL, GTK) are third-party, and on Linux need X11/Wayland/GL at runtime. Violates C-3/C-4. |
-| Go + Fyne / Ebitengine | Rejected | Third-party; Linux builds need cgo and X11/GL development headers. |
-| Go + hand-written Win32 and X11 windows | Runner-up (deferred) | Real windows with no libraries, but two large untested-from-here backends and no Wayland-only support. Possible later as a second front-end. |
-| **Go + terminal UI** | **Chosen** | Zero dependencies at build and run time, small platform layer, testable, works over SSH. |
+| **Go + Ebitengine, own software renderer** | **Chosen** | One direct dependency; builds without cgo for all targets; real window verified on Linux; input covers all mouse buttons; confined to one package. |
+| Go + terminal UI (v0.2 design) | Fallback | Zero dependencies, but not a window. Kept in git history (`659d62f`). |
+| Go + hand-written Win32 and X11 windows | Runner-up | Zero dependencies, but two large platform backends, no Wayland-only support, Windows untestable from Linux. A pure-Go X11 client library did work as a test driver in the probe, but a full window was not attempted. Possible later behind D-5. |
+| Fyne, Gio | Rejected | Not probed; per their documentation both need cgo and C headers on Linux, violating C-4, and are much larger. |
+| Python + tkinter | Rejected | Needs an interpreter; `tkinter` is a separate package on many Linux distros. |
+| Java / Swing, .NET | Rejected | Need a JRE / large runtime bundles; cross-platform GUI is third-party. |
+| Rust / C / C++ with SDL, GTK, egui | Rejected | More dependencies, C toolchains, and system libraries than the chosen option. |
+| Browser UI | Rejected | Violates C-6. |
 
 ---
 
 ## 4. Architecture
 
 ```
- cmd/minesweeper            flags, wiring, exit codes
+ cmd/minesweeper        flags, wiring, exit codes, error reporting
        │
        ▼
- internal/tui  ──uses──►  internal/engine   pure game rules
- events · decoder         internal/store    settings + best times (JSON file)
- model · view · renderer
-       │  bytes / size
-       ▼
- internal/term   raw mode, terminal size, VT setup, restore
- term_linux.go · term_windows.go · term_other.go (stub)
-       │
-   the user's terminal (Windows console / Windows Terminal / any ANSI terminal)
+ internal/shell   ← the ONLY package that imports Ebitengine (D-3)
+   opens the window · turns Ebitengine input into ui.Input · shows the frame
+       │  ui.Input                       ▲  *image.RGBA frame + window size
+       ▼                                 │
+ internal/ui      pure Go, no display needed
+   Model (state machine) · layout & hit-testing · pixel font & sprites
+   · software renderer → *image.RGBA
+       │ uses                    │ uses
+       ▼                         ▼
+ internal/engine  rules     internal/store  settings + best times (JSON file)
 ```
 
 | ID | Requirement |
 |---|---|
 | A-1 | `internal/engine` **MUST** have no I/O, no `time` calls and no package-level randomness. The clock and RNG seed are injected, so every behaviour is testable and deterministic. |
-| A-2 | The UI is a pipeline of pure steps: input bytes → `Decode` → **Events** (key, mouse, resize, tick) → `Model.Update(event)` → `Model.View()` → **Screen** (a grid of cells with glyph, colours, attributes) → `Diff(prev, next)` → output bytes. Only the outermost loop touches the terminal, so everything else is testable with no terminal at all. |
-| A-3 | **All OS-specific code lives in `internal/term`**, one file per OS behind build tags, plus a stub for other platforms that returns an "unsupported platform" error so `go vet ./...` and cross-builds still succeed. |
-| A-4 | One event loop owns the model and the screen. A reader goroutine (input), a ticker (250 ms: timer refresh and resize polling) and the signal handler only *send events* to it, so there are no data races and no locks in the UI. |
-| A-5 | Dependencies between packages: `engine`, `store` and `term` import nothing from this repo; `tui` imports `engine` and `store`; `cmd` imports `tui` and `term`. `tui` never imports `term`. |
+| A-2 | `internal/ui` is a pure function of its inputs: `Model.Update(Input) → Effects`, then `Model.Frame() → (*image.RGBA, dirty)`. `Input` is a plain struct (mouse position and buttons, keys pressed, typed characters, focus, time). The UI **MUST NOT** import Ebitengine, the OS, or the disk (persistence is reached through an interface). |
+| A-3 | All drawing is done by `internal/ui` into an `image.RGBA` at **logical (unscaled) resolution**. The shell scales it to the window. There are **no image, font or sound files**: sprites and the pixel font are defined in Go source. |
+| A-4 | Package dependencies: `engine` and `store` import nothing from this repo; `ui` imports `engine` (and a `store` interface); `shell` imports `ui`; `cmd` imports `shell`, `ui`, `store`. |
+| A-5 | The whole program is single-threaded from the UI's point of view: Ebitengine calls `Update` and `Draw` on one goroutine, and only they touch the `Model`. |
 
 ### Repository layout (target)
 
 ```
 cmd/minesweeper/main.go     entry point
 internal/engine/            rules, board, mine placement, flood fill, chord
-internal/tui/               events, input decoder, model, view, renderer, glyph/colour themes
-internal/term/              raw mode, size, VT setup, restore (per-OS files)
+internal/ui/                model, layout, menus/dialogs, pixel font, sprites, software renderer
+internal/shell/             Ebitengine window, input mapping, presentation (the only ebiten importer)
 internal/store/             settings + best-times persistence
 tools/build/main.go         cross-platform build/release script (Go, not make/bash)
+tools/checkdeps/main.go     dependency allowlist and confinement check
 .github/workflows/          ci.yml, release.yml
-SPEC.md  README.md  go.mod
+SPEC.md  README.md  go.mod  go.sum
 ```
 
 ---
@@ -165,7 +169,7 @@ SPEC.md  README.md  go.mod
 | ID | Requirement |
 |---|---|
 | G-13 | **Win** the moment every non-mine cell is revealed. Flags are irrelevant to the win condition. On win: timer stops, all unflagged mines are auto-flagged, mine counter shows 0. |
-| G-14 | **Lose** on revealing a mine. On loss: timer stops; every unflagged mine is shown; each flag on a non-mine is shown as a wrong flag; the mine(s) that triggered the loss are highlighted. |
+| G-14 | **Lose** on revealing a mine. On loss: timer stops; every unflagged mine is shown; each flag on a non-mine is shown crossed out; the mine(s) that triggered the loss are highlighted red. |
 
 ### 5.5 Counter and timer
 
@@ -179,91 +183,81 @@ SPEC.md  README.md  go.mod
 
 ## 6. User interface
 
-A full-screen terminal UI in the alternate screen buffer, using **two terminal columns per cell** so the classic 30×16 Expert board fits a default 80×24 terminal.
+A fixed-size window that recreates the classic Windows look, drawn entirely by `internal/ui`.
 
 ```
- [N]ew  [D]ifficulty  [B]est times  [O]ptions  [?]Help  [Q]uit
- ┌─────────────────────────────────────────────────────────┐
- │  010                        :)                     042  │   mines · face · time
- └─────────────────────────────────────────────────────────┘
- ┌─────────────────────────────────────────────────────────┐
- │  ▒ ▒ ▒ ▒ 1   1 ► ▒ ▒ ▒ ▒ …                              │
- │  ▒ ▒ ▒ ▒ 1   1 2 ▒ ▒ ▒ ▒ …                              │
- └─────────────────────────────────────────────────────────┘
-  Row 3, col 5: hidden                          (status line)
+┌─ Minesweeper ──────────────────────── ─ □ ✕ ┐   ← OS title bar
+│ Game   Help                                   │   ← in-window menu bar
+├───────────────────────────────────────────────┤
+│ ┌───────────────────────────────────────────┐ │
+│ │  [010]                :)             [042]│ │   LED counter · face · LED timer
+│ └───────────────────────────────────────────┘ │
+│ ┌───────────────────────────────────────────┐ │
+│ │ ▢▢▢▢▢▢▢▢▢▢ …  bevelled 16×16 cells         │ │
+│ └───────────────────────────────────────────┘ │
+└───────────────────────────────────────────────┘
 ```
 
-### Layout and rendering
+### Look and layout
 
 | ID | Requirement |
 |---|---|
-| U-1 | Screen, top to bottom: menu bar (1 row); header box (3 rows) with the mine counter left, face centre, timer right; board frame (`H + 2` rows); status line (1 row). Required terminal size is **(2W + 3) columns × (H + 7) rows** — Beginner 21×16, Intermediate 35×23, Expert 63×23. |
-| U-2 | **Too small:** if the terminal is smaller than U-1 requires, show only "Terminal too small — need C×R, have c×r. Enlarge the window, or press Q to quit" and resume automatically when it is large enough. The Custom dialog states the largest board that fits the current terminal and rejects larger ones. There is no scrolling viewport in v1. |
-| U-3 | **Face** (plain ASCII, so width is never ambiguous): `:)` ready/playing, `:O` while a mouse button is held over the board, `X(` after a loss, `B)` after a win. Clicking it starts a new game with the current board settings. |
-| U-4 | **Counters** are 3 digits, bold red on black (an "LED" look), zero-padded, `-` sign when negative. |
-| U-5 | **Cell glyphs** come from one of two sets, chosen by [U-10](#6-user-interface): see the table below. Every cell state has a distinct glyph, so **colour is never the only signal**. |
-| U-6 | **Colour:** 16-colour SGR only in v1 (no 256-colour/truecolor). Every board cell sets explicit foreground **and** background so contrast does not depend on the user's terminal theme. Numbers use distinct colours (1 bright blue, 2 green, 3 bright red, 4 magenta, 5 red, 6 cyan, 7 white, 8 dark grey); the palette lives in one table (`theme.go`). |
-| U-7 | **Mono mode:** when the `NO_COLOR` environment variable is set, `--no-color` is passed, or the Options colour setting is `off`, emit no colour codes; use only bold/reverse/underline attributes (focused cell = reverse video). The game must remain fully playable. |
-| U-8 | **Rendering:** the renderer diffs against the previous frame, emits only changed runs, and writes each frame with a single buffered write. It never writes to the bottom-right cell of the terminal (which would scroll it). It repaints fully on resize and on `Ctrl+L`. |
-
-| Meaning | `ascii` | `unicode` |
-|---|---|---|
-| Hidden | `#` | `▒` |
-| Revealed, 0 adjacent | (space) | (space) |
-| Revealed, 1–8 | `1`…`8` | `1`…`8` |
-| Flag | `F` | `►` |
-| Question mark | `?` | `?` |
-| Mine | `*` | `☼` |
-| Triggered mine | mine glyph on red (reverse+bold in mono) | same |
-| Wrong flag | `x` | `×` |
-
-The Unicode glyphs come from the WGL4 character repertoire (block elements, `►`, `☼`), which Windows fonts such as Consolas and Linux fonts such as DejaVu Sans Mono are expected to cover. **Confirm this visually in M3**; if any glyph fails on a target font, replace it.
-
-| ID | Requirement |
-|---|---|
-| U-9 | The **status line** always describes the focused cell in words ("Row 3, col 5: hidden / flagged / 3 adjacent mines / mine") and announces game events ("Game started", "You hit a mine", "You won in 42.31 s"). |
-| U-10 | **Glyph set:** `--glyphs auto\|ascii\|unicode` (default `auto`, also an Options setting). `auto` picks `unicode` under Windows Terminal (`WT_SESSION` set) or when the first non-empty of `LC_ALL`, `LC_CTYPE`, `LANG` names UTF-8, unless `TERM=linux`; otherwise `ascii`. |
-| U-11 | The **hardware cursor** is shown and kept on the focused cell, so screen magnifiers and readers that track the cursor follow play. It is hidden only while a dialog captures input. |
+| U-1 | **Classic style:** grey (#C0C0C0) panels; white/dark-grey bevels; hidden cells raised, revealed cells flat with a thin grid line; header panel with a 3-digit red-on-black seven-segment **mine counter** (left), **face button** (centre), and **timer** (right). Cells are **16×16 logical pixels**. All metrics live in one `layout.go`. |
+| U-2 | **Numbers 1–8** use the classic colours (1 blue #0000FF, 2 green #008000, 3 red #FF0000, 4 navy #000080, 5 maroon #800000, 6 teal #008080, 7 black, 8 grey #808080). Flags, mines, wrong-flags and question marks are distinct **shapes**, so colour is never the only signal. |
+| U-3 | **Face:** smiling by default; "surprised" while a mouse button is held on the board; "dead" (X eyes) after a loss; "cool" (sunglasses) after a win. Clicking it starts a new game with the current board. |
+| U-4 | **Text and sprites** come from a built-in pixel font (ASCII, defined in Go) and sprites defined as small bitmaps in Go source — no font, image, or asset files. |
+| U-5 | **Themes:** `classic` (default) and `dark` (same layout, dark palette). `dark` **SHOULD** keep all text at WCAG AA contrast. |
+| U-6 | **Scale:** the logical frame is shown at an integer scale of 1×–4× with nearest-neighbour filtering, so pixels stay crisp. Default `auto` = the largest of 1×–4× not exceeding `round(2 × display scale factor)` that still lets the Expert window fit on the monitor; Options and `--scale N` override it. The window resizes itself when the board or scale changes. |
+| U-7 | **Window:** title "Minesweeper"; not user-resizable; closing it quits; centred on first show. |
 
 ### Mouse
 
 | ID | Requirement |
 |---|---|
-| U-12 | Mouse input uses SGR reporting. A **gesture** starts at the first button press and ends when all buttons are released. The action applies at the end, on the cell under the release, and only if press and release were on the same cell (otherwise the gesture is cancelled): **left only** = reveal; **right only** = flag; **middle only**, or **left and right both held at any point** = chord. Acting on release is what makes left+right chording possible. |
-| U-13 | A gesture that never receives its release (terminal lost focus, dropped event) **MUST NOT** get stuck: any key press, or a second press of an already-held button, resets it. |
-| U-14 | **Click-to-chord** (`clickNumberChords`, default **on**): a plain left-click on a revealed number chords. This makes chording possible on trackpads with no middle button. |
-| U-15 | Menu-bar items, the face, dialog buttons and list rows are clickable. Wheel events are ignored. Where the mouse is unavailable (Linux virtual console, `tmux` with mouse off) everything is still reachable from the keyboard. |
+| U-8 | While a button is held over the board, the cell under the pointer (or the 3×3 block for a chord gesture) is drawn pressed and the face is "surprised". Actions apply on **release**, on the cell under the pointer; releasing outside the board cancels. |
+| U-9 | **Left** = reveal; **right** = flag; **middle**, or **left and right held together** = chord. |
+| U-10 | **Click-to-chord** (`clickNumberChords`, default **on**): a plain left-click on a revealed number chords, so chording works on trackpads without a middle button. |
+| U-11 | **Stuck-button safety:** if the window loses focus, or a release is never delivered, the gesture is cancelled and the display returns to normal. |
 
 ### Keyboard
 
 | ID | Requirement |
 |---|---|
-| U-16 | **Board:** arrow keys move the focus (with `Home`/`End` = row start/end, `PgUp`/`PgDn` = top/bottom row); `Space`/`Enter` = reveal (on a revealed number: chord, per U-14); `F` = flag; `C` = chord. **Global:** `N` or `F2` = new game; `D` = difficulty; `B` = best times; `O` = options; `?` or `F1` = help; `Q` = quit (asks to confirm only while a game is in progress); `Ctrl+C` = quit immediately; `Esc` closes a dialog. The whole game **MUST** be playable without a mouse. |
+| U-12 | Arrow keys move a focus cell (drawn with a dotted rectangle); `Home`/`End` = row start/end, `PgUp`/`PgDn` = top/bottom row. `Space`/`Enter` = reveal (on a revealed number: chord, per U-10); `F` = flag; `C` = chord; `F2` = new game; `F10` = open the menu bar (arrows + `Enter` to choose); `Esc` closes menus and dialogs. The whole game **MUST** be playable without a mouse. |
 
-### Dialogs
+### Menus and dialogs
+
+Menus and dialogs are drawn inside the window (the OS menu bar is not used), so they look identical on both platforms.
 
 | ID | Requirement |
 |---|---|
-| U-17 | **Difficulty:** Beginner / Intermediate / Expert / Custom, chosen by number key, arrows + `Enter`, or click. **Custom** has width/height/mines fields (`Tab` moves between them) with live validation against [G-1](#51-board-and-difficulty) and U-2. |
-| U-18 | **Best Times:** top 5 per preset, with a Reset action that asks for confirmation. |
-| U-19 | **Options:** question marks, click-to-chord, glyph set, colour (auto/on/off). Changes apply immediately and are saved. |
-| U-20 | **End of game:** a banner states win or loss and the time; offers *New game* / *Quit*. On a top-5 win it then offers a name field ([P-4](#8-persistence)). It **SHOULD** show the game's seed so a board can be reproduced with `--seed`. |
-| U-21 | **Help:** a one-screen summary of the controls in this section. |
+| U-13 | **Game menu:** New (`F2`) · Beginner · Intermediate · Expert · Custom… · *(separator)* · Marks `(?)` (checkbox) · Click number to chord (checkbox) · Theme › classic / dark · Scale › auto / 1× / 2× / 3× / 4× · *(separator)* · Best Times… · *(separator)* · Exit. The current difficulty is checked. **Help menu:** Controls… · About. |
+| U-14 | **Custom…** has width, height and mines fields (`Tab` moves between them; digits and `Backspace` edit), with live validation against [G-1](#51-board-and-difficulty), and OK / Cancel. |
+| U-15 | **Best Times:** top 5 per preset, with a Reset button that asks for confirmation. |
+| U-16 | **End of game:** the face changes ([U-3](#look-and-layout)); on a top-5 win a name-entry dialog appears (printable ASCII, ≤ 20 characters, pre-filled with the last name; [P-4](#8-persistence)). The seed of the finished game **SHOULD** be shown in **About** or the end dialog so a board can be reproduced with `--seed`. |
+
+### Accessibility (honest scope)
+
+| ID | Requirement |
+|---|---|
+| U-17 | Fully keyboard-playable (U-12), scalable up to 4×, high-contrast-capable via the `dark` theme, and no reliance on colour alone (U-2). |
+| U-18 | **Known limitation:** the game is a custom-drawn canvas, so it exposes no accessibility tree and **screen readers cannot read it**. This is a trade-off of the chosen approach and is stated in the README. |
 
 ---
 
-## 7. Terminal layer
+## 7. Windowing shell
 
-`internal/term` is the only place that talks to the operating system's terminal facilities. Its Linux half was prototyped and verified ([§3](#3-technology-decision)); its Windows half was compiled only.
+`internal/shell` is the only code that touches Ebitengine. It is deliberately thin.
 
 | ID | Requirement |
 |---|---|
-| TL-1 | **Refuse non-terminals:** if stdin or stdout is not a terminal, or `TERM` is `dumb` or unset (Linux), print a one-line message to stderr and exit 2. |
-| TL-2 | **Setup**, in this order: enter raw mode; alternate screen (`ESC[?1049h`); disable auto-wrap (`ESC[?7l`); enable mouse press/release (`?1000h`) with SGR encoding (`?1006h`). Raw mode **MUST** deliver Ctrl+C as a key rather than a signal. **Linux:** `TCGETS`/`TCSETS` via `syscall`; clear `ECHO`, `ICANON`, `ISIG`, `IEXTEN`, `ICRNL`, `IXON`, `OPOST`. **Windows:** via `kernel32`: clear `ENABLE_PROCESSED_INPUT`, `ENABLE_LINE_INPUT`, `ENABLE_ECHO_INPUT` and **`ENABLE_QUICK_EDIT_MODE`** (which otherwise swallows mouse clicks), set `ENABLE_VIRTUAL_TERMINAL_INPUT` and `ENABLE_EXTENDED_FLAGS`; on output set `ENABLE_VIRTUAL_TERMINAL_PROCESSING`; set the output code page to UTF-8 (65001). |
-| TL-3 | **Restore guarantee:** a single idempotent `Restore()` undoes everything in TL-2 (mouse off, auto-wrap on, cursor shown, alternate screen left, original terminal/console modes and code page) and runs on **every** exit path: normal quit, Ctrl+C key, `SIGTERM`/`SIGHUP`, fatal error, and panic (recover → restore → print the panic to stderr → exit 1). On Windows, console close, logoff and shutdown reach Go as `SIGTERM`. |
-| TL-4 | **Input decoding** is a pure function over bytes (`internal/tui`): printable text (UTF-8); `Enter` (CR/LF); `Tab`, `Shift+Tab`; `Backspace` (0x7F/0x08); `Esc`; arrows, `Home`/`End`, `PgUp`/`PgDn`, `Delete` (CSI and SS3 forms); `F1`–`F12`; `Ctrl+letter` (bytes 1–26); and SGR mouse `CSI < b ; x ; y (M\|m)` (low bits: 0 left, 1 middle, 2 right; +4 shift, +8 alt, +16 ctrl, +32 motion, +64 wheel; coordinates are 1-based). Unknown sequences are dropped, never crash (fuzzed, [T-8](#11-testing-strategy)); sequences split across reads are buffered; a lone `Esc` is resolved after 30 ms with no following byte. |
-| TL-5 | **Resize:** poll the size every 250 ms on the UI tick (`TIOCGWINSZ` on Linux; `GetConsoleScreenBufferInfo` on Windows) instead of using `SIGWINCH`, so both OSes share one code path. A change triggers a full repaint. |
-| TL-6 | **Unsupported platforms** (e.g. macOS in v1) build, but exit 2 with "unsupported platform". |
+| W-1 | **Window:** create it at the size the `Model` requests (logical size × scale), set the title, disable user resizing, and resize (`SetWindowSize`) whenever the `Model` reports a new size. Closing the window or `Effects.Quit` ends the program with exit 0. |
+| W-2 | **Input mapping:** each `Update`, build one `ui.Input` from Ebitengine: pointer position in logical pixels, left/middle/right button state, keys pressed this tick (with auto-repeat for arrows and `Backspace`), typed characters, and window focus. No Ebitengine types leak out of the package. |
+| W-3 | **Presentation:** when the `Model` reports the frame is dirty, upload the `*image.RGBA` to a texture and draw it scaled by an integer factor with nearest-neighbour filtering ([U-6](#look-and-layout)); otherwise draw nothing new. |
+| W-4 | **Idle cost:** the tick rate is capped at 30 per second and an unchanged frame is not re-uploaded. Target: under 2 % of one core when idle — **to be measured** at M3/M5; if Ebitengine cannot skip drawing cleanly, lower the idle tick rate instead. |
+| W-5 | **Startup failure** (no display, no GL, etc.): on Linux print one clear line to stderr and exit 1; on Windows, where the GUI-subsystem build has no console, show a native message box (`user32!MessageBoxW` through the standard `syscall` package) and exit 1. `--help` and `--version` output uses the same two paths. |
+| W-6 | **`--smoke`:** open the window, run about 30 frames including one scripted click, exit 0; any initialisation failure exits non-zero. Used by CI on Linux under a virtual X server (`xvfb-run`). |
+| W-7 | The timer runs on the engine's monotonic clock, so it is unaffected if the window stops updating while minimised or unfocused. |
 
 ---
 
@@ -272,12 +266,12 @@ The Unicode glyphs come from the WGL4 character repertoire (block elements, `►
 | ID | Requirement |
 |---|---|
 | P-1 | State lives in one file, `state.json`, in `<config dir>/minesweeper/`, where `<config dir>` is `os.UserConfigDir()` (Linux: `$XDG_CONFIG_HOME` or `~/.config`; Windows: `%AppData%`). `--data-dir` overrides it (`--data-dir .` gives a portable install). |
-| P-2 | Schema v1: `{"version":1,"settings":{"questionMarks":false,"clickNumberChords":true,"glyphs":"auto","color":"auto"},"lastBoard":{…},"lastName":"…","bestTimes":{"beginner":[{"name":"…","ms":12340,"at":"<RFC 3339 UTC>"}],"intermediate":[…],"expert":[…]}}`. |
+| P-2 | Schema v1: `{"version":1,"settings":{"questionMarks":false,"clickNumberChords":true,"theme":"classic","scale":0},"lastBoard":{…},"lastName":"…","bestTimes":{"beginner":[{"name":"…","ms":12340,"at":"<RFC 3339 UTC>"}],"intermediate":[…],"expert":[…]}}` (`scale` 0 = auto). |
 | P-3 | Best times: top **5** per preset, ascending by `ms`; on a tie the earlier record ranks first. Custom boards are never recorded. |
-| P-4 | A qualifying win is saved **immediately** under the last-used name (default `Anonymous`), so a crash or closed terminal cannot lose it; the name dialog then renames that record. Names are trimmed, ≤ 20 characters, printable characters only. |
+| P-4 | A qualifying win is saved **immediately** under the last-used name (default `Anonymous`), so a crash cannot lose it; the name dialog then renames that record. Names are trimmed, ≤ 20 characters, printable ASCII only. |
 | P-5 | Writes are atomic: write a temp file in the same directory, `fsync`, then `os.Rename` over the target (Go's Windows rename replaces existing files). Settings are written when changed and best times when earned, not only on exit. |
-| P-6 | A corrupt or unknown-version file **MUST NOT** crash the game or be overwritten silently: rename it to `state.json.bad-<unix time>`, start with defaults, and show a one-line notice in the status line. The file is read with a 1 MiB cap. |
-| P-7 | If the data directory cannot be created or written, the game **MUST** still run, without persistence, and the status line says so. |
+| P-6 | A corrupt or unknown-version file **MUST NOT** crash the game or be overwritten silently: rename it to `state.json.bad-<unix time>`, start with defaults, and show a notice in the window. The file is read with a 1 MiB cap. |
+| P-7 | If the data directory cannot be created or written, the game **MUST** still run, without persistence, and says so in the window. |
 | P-8 | The game writes nothing outside the data directory. |
 
 ---
@@ -290,20 +284,17 @@ The Unicode glyphs come from the WGL4 character repertoire (block elements, `►
 |---|---|---|
 | `--data-dir PATH` | per-user config dir | Where `state.json` lives. |
 | `--seed N` | random | Deterministic games: game *k* uses a seed derived from `N` and *k*. |
-| `--glyphs auto\|ascii\|unicode` | `auto` | Glyph set ([U-10](#6-user-interface)). Overrides the saved option. |
-| `--no-color` | off | Mono mode ([U-7](#6-user-interface)). The `NO_COLOR` environment variable does the same. |
-| `--version` | | Print version and exit 0. |
-| `--help` | | Print usage and exit 0. |
+| `--scale N` | auto | Force scale 1–4 for this run (overrides the saved option). |
+| `--smoke` | off | Self-test mode ([W-6](#7-windowing-shell)). |
+| `--version`, `--help` | | Show and exit 0 ([W-5](#7-windowing-shell) for where it is shown). |
 
-Exit codes: `0` normal, `1` runtime error, `2` usage error or unsupported terminal. Errors go to stderr **after** the terminal is restored.
+Exit codes: `0` normal, `1` runtime or startup error, `2` usage error.
 
 | ID | Requirement |
 |---|---|
-| L-1 | Quitting is explicit: `Q`, `Ctrl+C`, or closing the terminal window. There is no background process and no port to clean up. |
-| L-2 | The Windows build is a **console-subsystem** program (no `-H windowsgui`), so double-clicking the `.exe` opens a console window automatically. |
-| L-3 | On Windows, if the process is the only client of its console (double-clicked) and it exits on an **error**, it SHOULD wait for Enter first so the message can be read before the window vanishes. |
-| L-4 | On Linux the binary is started from a terminal; double-clicking in a file manager is not supported (file managers do not reliably give programs a terminal). |
-| L-5 | One game exists per process. Two copies running at once share one `state.json`; the last writer wins. This is a documented limitation, not something to lock against. |
+| L-1 | The Windows build is a **GUI-subsystem** program (`-H windowsgui`): double-clicking the `.exe` opens only the game window, with no console. |
+| L-2 | On Linux the binary is a normal executable (`chmod +x`, then run from a terminal or a launcher). A `.desktop` file and icon are out of scope for v1. |
+| L-3 | One game exists per process. Two copies running at once share one `state.json`; the last writer wins. This is a documented limitation, not something to lock against. |
 
 ---
 
@@ -311,30 +302,30 @@ Exit codes: `0` normal, `1` runtime error, `2` usage error or unsupported termin
 
 | ID | Requirement |
 |---|---|
-| N-1 | **Startup:** first frame within 300 ms of launch on modest hardware. |
-| N-2 | **Responsiveness:** input → repainted result under 50 ms at p95 on the largest board that fits (50×30). Engine reveal with full flood fill under 5 ms. |
-| N-3 | **Size:** each release binary ≤ 5 MB (the probe measured 1.4–1.5 MB before the game code). |
-| N-4 | **Memory:** target under 30 MB resident (a budget to confirm at M5, not yet measured). |
-| N-5 | **Go version:** `go.mod` declares `go 1.22` (`math/rand/v2` stable PCG source, built-in `min`/`max`). CI also builds with the latest stable Go. |
-| N-6 | **Terminals:** *Windows* — Windows Terminal, the classic console host on Windows 10 1809+, and the VS Code terminal. *Linux* — any xterm-compatible terminal with SGR mouse (GNOME Terminal/VTE, Konsole, xterm, kitty, alacritty, foot), also over SSH and inside `tmux` with `mouse on`. The Linux virtual console has no mouse: keyboard-only, `ascii` glyphs. |
-| N-7 | **Strings:** all user-visible text lives in one `strings` table so a later translation touches one place. |
-| N-8 | **Output:** nothing is printed to stdout/stderr while the UI is up; fatal errors print once, after the terminal is restored. |
+| N-1 | **Startup:** window visible within 1 s of launch on modest hardware. |
+| N-2 | **Responsiveness:** click → repainted result under 50 ms on the largest board (50×30). Engine reveal with full flood fill under 5 ms. |
+| N-3 | **Size:** each release binary ≤ 20 MB (the probe measured roughly 9–13 MB before game code). |
+| N-4 | **Memory:** target under 100 MB resident (a budget to confirm at M5, not yet measured). |
+| N-5 | **Supported systems:** Windows 10+ with a DirectX-capable graphics stack; Linux on a **glibc** distribution with X11 or XWayland, OpenGL, and the libraries listed in [§3.1](#31-what-was-verified-before-choosing-this). musl-based distros (e.g. Alpine) are unsupported. |
+| N-6 | **Strings:** all user-visible text lives in one `strings` table so a later translation touches one place. |
 
 ### Risks
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| R-1 | **Windows console input is unverified.** Mouse events via virtual-terminal input have not been run on real Windows (classic console host vs Windows Terminal may differ). | Do the terminal layer **first** (M2) and test it on real Windows 10 and 11 before building the game on top. Fallback: read native console input records (`ReadConsoleInputW`) inside `internal/term` and emit the same Events — nothing above `term` changes. Keyboard play works regardless. |
-| R-2 | Unicode glyphs may not exist in a user's terminal font. | ASCII set is always available; `auto` is conservative; glyph check is part of M3. |
-| R-3 | Terminal themes (e.g. Solarized) remap the 16 colours, weakening contrast. | Explicit fg+bg on every cell; `--no-color` mono mode. |
-| R-4 | Large boards need large terminals. | U-2: clear "too small" message and Custom-dialog limits. |
-| R-5 | Some environments deliver no mouse events (tmux mouse off, Linux console, some multiplexers). | Complete keyboard control (U-16). |
+| R-1 | **Nothing has been run on Windows.** The Windows build compiles, but window creation, DirectX use, mouse buttons and `-H windowsgui` behaviour are unverified. | M2 exists to prove the window + input + frame path on real Windows 10 and 11 *before* the game is built on it. If Ebitengine misbehaves there, D-5 limits the fix to `internal/shell`. |
+| R-2 | **Ebitengine churn and a very new Go requirement** (`go 1.25.0` at v2.10.4). Contributors need a recent toolchain; APIs may change. | Exact pin (D-1); deliberate upgrades (D-4); `GOTOOLCHAIN=auto` fetches the toolchain; README states the version. |
+| R-3 | **Linux runtime libraries and glibc.** A minimal install or musl distro will not start. | Clear startup error (W-5); README lists the packages; N-5 declares scope. |
+| R-4 | **Wayland-only sessions** (no XWayland) are unsupported by this backend. | Documented; expected to work under normal GNOME/KDE Wayland via XWayland — verify in §12. |
+| R-5 | **Idle CPU:** a game loop that redraws constantly wastes battery. | W-4 cap and measurement; fallback to a lower idle tick rate. |
+| R-6 | **Single third-party dependency is still a supply-chain surface.** | D-1…D-4: exact pin, `go.sum`, allowlist check, reviewed upgrades. |
+| R-7 | **No screen-reader support** (U-18). | Stated openly; keyboard play and scaling provided. |
 
 ---
 
 ## 11. Testing strategy
 
-Because the UI is a pipeline of pure steps ([A-2](#4-architecture)), nearly everything is testable with plain `go test` and no terminal.
+Because `ui` produces an in-memory image and takes plain input structs ([A-2](#4-architecture), [A-3](#4-architecture)), almost everything is testable with plain `go test` — no display, no GPU, no Ebitengine.
 
 | ID | Area | Required tests |
 |---|---|---|
@@ -342,62 +333,62 @@ Because the UI is a pipeline of pure steps ([A-2](#4-architecture)), nearly ever
 | T-2 | Engine — placement | Exact mine count; every cell's number equals a brute-force recount; determinism for equal seed + first click; golden layouts for several seeds ([G-5](#52-mine-placement)). |
 | T-3 | Engine — flood fill | Matches a naive reference implementation on small boards; a sparse 50×30 board completes without deep recursion; flags block fill. |
 | T-4 | Engine — actions and end states | Table-driven cases for reveal, flag cycle (with/without `?`), chord (exact, too few, too many flags, wrong flag → loss, on a `0`, on a hidden cell), post-game rejection; win detection, loss reveal, negative counter, timer start/stop/cap using a fake clock. |
-| T-5 | UI model | Feed Event sequences to `Model.Update`, assert on `View()` text: a full win, a full loss, flag cycle, chord, menus and dialogs, Custom validation, name entry, "too small" and recovery, status-line text. Golden frames for a fixed seed on Beginner. |
-| T-6 | Mouse gestures | Left, right, middle, left+right (both orders), press/release on different cells (cancelled), lost release (reset by key press), click-to-chord on/off. |
-| T-7 | Renderer | Diff of identical frames is empty; one changed cell yields minimal output; applying a diff to a tiny in-test screen model reproduces the next frame; last cell is never written. |
-| T-8 | Input decoder | Table tests for every sequence in [TL-4](#7-terminal-layer), including split reads and the lone-`Esc` timeout; a **`go test -fuzz` target** asserting the decoder never panics and always makes progress. |
-| T-9 | Store | Temp dir: round trip; atomic write leaves no partial file; corrupt file → `.bad-*` backup and defaults; unwritable dir → runs without persistence; top-5 ordering and tie-break. |
-| T-10 | Real-terminal integration (Linux CI) | Using only the standard library (`/dev/ptmx` via `syscall`), start the built binary in a pseudo-terminal, send keys and SGR mouse bytes, and assert: alternate screen and mouse mode on/off, a move changes the frame, and **the terminal's settings are identical before and after** a normal quit, a Ctrl+C key, and `SIGTERM`. This is the same check that was run against the prototype. |
-| T-11 | Windows | `GOOS=windows go vet ./...` and cross-build in CI; behaviour verified by the manual checklist below on real machines (R-1). |
+| T-5 | UI model | Feed `Input` sequences to `Model.Update` and assert on state: a full win and loss, flag cycle, every mouse gesture (left, right, middle, left+right in both orders, release outside board = cancel, focus loss = cancel), click-to-chord on/off, keyboard-only play, menus (including `F10` navigation), Custom validation, name entry, hit-testing for every board size and scale. |
+| T-6 | UI rendering | **Golden images:** render fixed scenarios (fresh Beginner board, mid-game, won, lost, each menu, each dialog, both themes, scales 1× and 2×) to PNG and compare with `testdata/*.png`; `go test -update` regenerates them for deliberate changes. Deterministic because rendering is pure software. Also unit tests for the LED digits and pixel font. |
+| T-7 | Store | Temp dir: round trip; atomic write leaves no partial file; corrupt file → `.bad-*` backup and defaults; unwritable dir → runs without persistence; top-5 ordering and tie-break. |
+| T-8 | Dependency rules | (a) `go list -deps` per target shows compiled third-party modules ⊆ the allowlist ([D-2](#32-dependency-policy)); (b) parsing imports shows only `shell` and `cmd` import Ebitengine ([D-3](#32-dependency-policy)); (c) `go.mod` has exactly one direct `require` ([D-1](#32-dependency-policy)). Implemented in `tools/checkdeps`, run by CI. |
+| T-9 | Window smoke (Linux CI) | `xvfb-run ./minesweeper --smoke` exits 0 ([W-6](#7-windowing-shell)) — proves window, GL and input plumbing start on a clean runner. |
+| T-10 | Windows | `GOOS=windows go vet ./...` and cross-build in CI; behaviour verified by the manual checklist on real machines (R-1). If a Windows CI runner can open a window, add `--smoke` there as best-effort. |
 
-**Gates (CI):** `gofmt -l .` empty · `go vet ./...` for `linux` and `windows` · `go test ./...` on Linux **and** Windows · `go test -race ./...` on Linux · no `require` in `go.mod` · statement coverage: engine ≥ 95 %, `tui` ≥ 85 %, overall ≥ 80 %.
+**Gates (CI):** `gofmt -l .` empty · `go vet ./...` for `linux` and `windows` · `go test ./...` on Linux **and** Windows · `go test -race ./...` on Linux (needs a C compiler in CI, which is fine — only *building the product* must not) · `tools/checkdeps` · engine statement coverage ≥ 95 %, `ui` ≥ 85 %, overall ≥ 80 %.
 
 ---
 
 ## 12. Acceptance checklist
 
-Run manually on a **clean** Windows 10 (classic console host), Windows 11 (Windows Terminal) and a mainstream Linux desktop (no Go, Python or dev tools installed), using only the downloaded release file.
+Run manually on a **clean** Windows 10, Windows 11, and a mainstream Linux desktop in both an X11 session and a Wayland session (no Go or dev tools installed), using only the downloaded release file.
 
-- [ ] Runs with no installer and no extra downloads; on Windows, double-click opens a console window with the game.
-- [ ] Beginner, Intermediate, Expert and a Custom board all have the right size and mine count; Expert fits a default 80×24 terminal.
+- [ ] Runs from the downloaded file; on Windows double-click opens only the game window (no console).
+- [ ] Beginner, Intermediate, Expert and a Custom board have the right size and mine count; the window resizes correctly when switching.
+- [ ] Looks crisp (no blur) at scales 1×–4× and on a HiDPI display; `auto` picks a sensible size.
 - [ ] First click never loses and always opens a region, including in a corner.
-- [ ] Left, right, middle and left+right clicks behave as in [U-12](#6-user-interface); click-to-chord works on a trackpad; on Windows **mouse clicks are not swallowed by QuickEdit** (TL-2).
-- [ ] Playable entirely from the keyboard ([U-16](#6-user-interface)); the hardware cursor tracks the focused cell.
-- [ ] Win → `B)`, auto-flagged mines, counter 0, name prompt on a top-5 time; loss → `X(`, mines / wrong flags / triggered mine shown.
+- [ ] Left, right, middle, and left+right behave as in [U-8, U-9](#mouse); click-to-chord works on a trackpad; releasing outside the board cancels; alt-tabbing mid-press does not leave a stuck button.
+- [ ] Playable entirely from the keyboard ([U-12](#keyboard)) including the menu via `F10`.
+- [ ] Win → cool face, auto-flagged mines, counter 0, name prompt on a top-5 time; loss → dead face, mines / crossed flags / red triggered mine.
 - [ ] Timer starts on first reveal and stops at the end.
 - [ ] Best times and settings persist across restarts; the file is where [P-1](#8-persistence) says and nothing else is written elsewhere.
 - [ ] Corrupt `state.json` → game still starts, backup file created, notice shown.
-- [ ] After **every** way of leaving (Q, Ctrl+C, closing the window, `kill`), the shell is back to normal: echo on, cursor visible, no mouse garbage typed on click, scrollback intact.
-- [ ] Resizing smaller shows the "too small" screen and recovers on enlarging; no stray characters.
-- [ ] Both glyph sets render correctly in each terminal's default font; `NO_COLOR` / `--no-color` is fully playable; a light-background terminal and a dark one are both readable.
-- [ ] Works over SSH and in `tmux` (with `mouse on`).
-- [ ] With the network disabled, everything works; `ss -tunap` / `netstat` shows no sockets opened by the game (C-5).
+- [ ] Both themes readable; every menu and dialog usable at 1× and 4×.
+- [ ] Idle CPU under 2 % of a core with the window open and untouched ([W-4](#7-windowing-shell)).
+- [ ] On Linux with no display (`env -u DISPLAY`) and, if reproducible, with missing libraries: one clear error line, exit 1. On Windows, `--help` shows a message box.
+- [ ] With the network disabled, everything works; no sockets opened by the game (C-5).
 
 ---
 
 ## 13. Milestones
 
-Update the checkboxes here (and the README status line) as work lands. The order is **risk-first**: the unverified Windows terminal work comes before the game is built on top of it.
+Update the checkboxes here (and the README status line) as work lands. The order is **risk-first**: the unverified Windows window comes before the game is built on it.
 
 | | Milestone | Exit criteria |
 |---|---|---|
-| [ ] | **M0 Scaffold** | `go.mod` (no requires), `cmd/minesweeper` prints `--version`, CI green on Ubuntu + Windows, cross-builds for all four targets. |
+| [ ] | **M0 Scaffold** | `go.mod` (one require, exact pin), `cmd/minesweeper` prints `--version`, `tools/checkdeps`, CI green on Ubuntu + Windows, cross-builds for all four targets. |
 | [ ] | **M1 Engine** | §5 fully implemented; T-1 … T-4 pass; coverage ≥ 95 %. |
-| [ ] | **M2 Terminal layer + decoder + renderer** | `internal/term` (§7) and the input decoder/renderer working with a throwaway demo that draws a grid and reports clicks and keys. T-7, T-8, T-10 pass; **demo verified on real Windows 10 and 11 and on Linux (R-1 closed or fallback adopted).** |
-| [ ] | **M3 Playable game** | Model + view for core play (reveal, flag, chord, win/lose, counters, face, keyboard, mouse gestures, too-small screen); T-5, T-6 pass; glyph check on target fonts (U-5). |
-| [ ] | **M4 Full UI + persistence** | All dialogs (U-17…U-21), Options, Best Times, Custom, help, §8; T-9 passes. |
+| [ ] | **M2 Window proof** | `internal/shell` + a minimal `ui` that renders a grid to an RGBA image and reports clicks/keys. T-8, T-9 pass; **verified by hand on real Windows 10 and 11 and on Linux X11 and Wayland — R-1 closed, or the shell is adapted.** |
+| [ ] | **M3 Playable game** | Pixel font, sprites, LED digits, classic rendering, core play (reveal, flag, chord, win/lose, counters, face), keyboard and mouse gestures, scale; T-5, T-6 pass; idle CPU measured (W-4). |
+| [ ] | **M4 Full UI + persistence** | Menus and all dialogs (U-13 … U-16), themes, Custom, Best Times, §8; T-7 passes. |
 | [ ] | **M5 Release** | `go run ./tools/build` produces all four binaries + `SHA256SUMS`; release workflow on tags; NFRs measured; §12 checklist passed; README screenshots. |
 
 ### Build and release (M0 / M5)
 
 | ID | Requirement |
 |---|---|
-| B-1 | Build tooling is written in **Go** (`go run ./tools/build`), not `make` or shell scripts, so the identical command works on Windows and Linux without extra installs. |
-| B-2 | Release builds use `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=<v>"`, version from `git describe --tags --always --dirty` (fallback `dev`). |
-| B-3 | Targets: `linux/amd64`, `linux/arm64`, `windows/amd64`, `windows/arm64`. Other platforms build but exit "unsupported platform" ([TL-6](#7-terminal-layer)). |
-| B-4 | Output names: `minesweeper-<version>-<os>-<arch>[.exe]` in `dist/`, plus `SHA256SUMS`. |
-| B-5 | Pushing a tag `vX.Y.Z` (semver) triggers a workflow that builds all targets and attaches the files to a GitHub Release. |
-| B-6 | Binaries are **unsigned**; Windows SmartScreen will warn on first run. The README documents this. Code signing is out of scope. |
+| B-1 | The required Go version is whatever Ebitengine's `go` directive demands (**1.25.0** at the pinned v2.10.4); `go.mod` records it and the README states it. |
+| B-2 | Build tooling is written in **Go** (`go run ./tools/build`), not `make` or shell scripts, so the identical command works on Windows and Linux without extra installs. |
+| B-3 | Release builds use `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=<v>"`, plus `-H windowsgui` for Windows targets; version from `git describe --tags --always --dirty` (fallback `dev`). |
+| B-4 | Targets: `linux/amd64`, `linux/arm64`, `windows/amd64`, `windows/arm64`. |
+| B-5 | Output names: `minesweeper-<version>-<os>-<arch>[.exe]` in `dist/`, plus `SHA256SUMS`. |
+| B-6 | Pushing a tag `vX.Y.Z` (semver) triggers a workflow that builds all targets and attaches the files to a GitHub Release. |
+| B-7 | Binaries are **unsigned**; Windows SmartScreen will warn on first run. The README documents this. Code signing is out of scope. |
 
 ---
 
@@ -405,10 +396,11 @@ Update the checkboxes here (and the README status line) as work lands. The order
 
 Not in v1; candidates in rough priority order:
 
-1. **Native-window front-end** with hand-written Win32 and X11 backends reusing `internal/engine` — the runner-up in §3. Worth doing only if a terminal proves unacceptable; needs a Windows test machine and has no Wayland-only support.
-2. **Scrolling viewport** so boards larger than the terminal can be played.
-3. **No-guess board generator** and a hint/solver built on the engine.
-4. Save and resume an in-progress game.
-5. 256-colour / truecolor themes.
-6. Localisation (see N-7).
-7. Replay/export of a game from its seed and move list.
+1. **Dropping the dependency:** hand-written Win32 and X11 backends behind the `internal/shell` boundary (D-5), giving a zero-dependency build again.
+2. **Terminal front-end** as a zero-dependency fallback, revived from the v0.2 design in git history.
+3. `.desktop` entry, application icon, and installers.
+4. **No-guess board generator** and a hint/solver built on the engine.
+5. Save and resume an in-progress game.
+6. Sound effects (opt-in).
+7. Localisation (see N-6).
+8. Replay/export of a game from its seed and move list.

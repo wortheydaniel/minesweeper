@@ -1,6 +1,6 @@
 # Minesweeper
 
-Classic Minesweeper for **Windows and Linux**, played in your terminal with the mouse or keyboard. One file, no installer, no runtime, no dependencies — and no browser.
+Classic Minesweeper for **Windows and Linux**, as a native desktop window with the classic look. One downloaded file — no installer, no browser, no runtime.
 
 > **Status: specification stage — no code yet.**
 > The design is finished and lives in [`SPEC.md`](SPEC.md); implementation is tracked by the milestones in [SPEC §13](SPEC.md#13-milestones). Everything below describes the **intended** interface. The commands will work once milestone M5 lands; until then, treat this README as the contract the code must meet.
@@ -9,54 +9,62 @@ Classic Minesweeper for **Windows and Linux**, played in your terminal with the 
 
 ## Requirements
 
-| To play | To build from source |
+**To play**
+
+| OS | What you need |
 |---|---|
-| Windows 10 (version 1809 or newer) or Linux, on amd64 or arm64 | [Go](https://go.dev/dl/) 1.22 or newer — nothing else |
-| A terminal (the Windows console, Windows Terminal, or any Linux terminal emulator) | |
+| **Windows** 10 or newer (amd64 or arm64) | Nothing. |
+| **Linux** (amd64 or arm64) | A **glibc** desktop distribution (Debian, Ubuntu, Fedora, Arch, …) running an X11 session, or Wayland with XWayland (the default on GNOME and KDE), with OpenGL. |
 
-That's the complete list. There is no Python, Java, .NET, Node, or system library to install, and the game never uses the network.
+On a normal Linux desktop the required libraries are already installed. On a minimal install, add them — on Debian/Ubuntu:
 
-A terminal of **at least 80×24** is recommended; Expert needs 63×23. For the mouse you need a terminal that reports it (Windows Terminal, GNOME Terminal, Konsole, xterm, kitty, alacritty and most others do). Without a mouse the whole game is playable from the keyboard.
+```
+sudo apt install libgl1 libx11-6 libxcursor1 libxrandr2 libxinerama1 libxi6 libxxf86vm1
+```
+
+Alpine and other musl-based distributions are not supported. There is no Python, Java, .NET, Node, or browser involved, and the game never uses the network.
+
+**To build from source**
+
+[Go](https://go.dev/dl/) **1.25 or newer** (Go can download the right toolchain itself). No C compiler and no system development packages are needed.
 
 ## Quick start
 
 Download the file for your system from the Releases page, then:
 
-**Windows** — double-click `minesweeper-<version>-windows-amd64.exe` (a console window opens with the game), or run it from a terminal. Windows SmartScreen may warn about an unrecognised app because the binary is unsigned: choose *More info → Run anyway*.
+**Windows** — double-click `minesweeper-<version>-windows-amd64.exe`. Windows SmartScreen may warn about an unrecognised app because the binary is unsigned: choose *More info → Run anyway*.
 
-**Linux** — run it from a terminal:
+**Linux**
 ```
 chmod +x minesweeper-<version>-linux-amd64
 ./minesweeper-<version>-linux-amd64
 ```
 
-Press `Q` to quit (or `Ctrl+C` to quit immediately).
-
 ## How to play
 
-Reveal every square that isn't a mine. A number tells you how many of the 8 neighbouring squares are mines.
+Reveal every square that isn't a mine. A number tells you how many of the 8 neighbouring squares are mines. The first click is always safe and always opens an area.
 
 | Action | Mouse | Keyboard |
 |---|---|---|
-| Move | — | Arrow keys (`Home`/`End`, `PgUp`/`PgDn` jump) |
+| Move focus | — | Arrow keys (`Home`/`End`, `PgUp`/`PgDn` jump) |
 | Reveal | Left-click | `Space` / `Enter` |
 | Flag (and `?` if enabled) | Right-click | `F` |
 | Chord — open all neighbours of a satisfied number | Middle-click, left+right together, or left-click the number (on by default) | `C` |
-| New game | Click the face `:)` | `N` or `F2` |
-| Difficulty / Best times / Options / Help | Click the menu bar | `D` / `B` / `O` / `?` |
-| Quit | Menu bar | `Q` or `Ctrl+C` |
+| New game | Click the face | `F2` |
+| Menu | Click **Game** / **Help** | `F10` |
+| Cancel a menu or dialog | — | `Esc` |
 
-The first click is always safe and always opens an area. Difficulties: **Beginner** 9×9/10 mines, **Intermediate** 16×16/40, **Expert** 30×16/99, or **Custom** (as large as your terminal allows). Best times are kept for the top 5 on each preset.
+Difficulties: **Beginner** 9×9/10 mines, **Intermediate** 16×16/40, **Expert** 30×16/99, or **Custom**. Best times are kept for the top 5 on each preset. The window size (1×–4×), theme (classic or dark), question marks, and click-to-chord are in the **Game** menu.
 
 ## Command-line options
 
 | Option | Default | Purpose |
 |---|---|---|
-| `--glyphs auto\|ascii\|unicode` | `auto` | Symbol set for cells. Use `ascii` if you see boxes or question marks instead of symbols. |
-| `--no-color` | off | Monochrome mode (also enabled by the `NO_COLOR` environment variable). |
+| `--scale N` | auto | Window scale 1–4 for this run. |
 | `--data-dir PATH` | per-user config dir | Where settings and best times are stored. `--data-dir .` makes a portable install. |
 | `--seed N` | random | Reproducible boards, useful for bug reports and tests. |
-| `--version`, `--help` | | Print and exit. |
+| `--smoke` | off | Self-test: open the window, run a few frames, exit (used by CI). |
+| `--version`, `--help` | | Show and exit. On Windows these appear in a message box, because the program has no console. |
 
 ## Where your data goes
 
@@ -71,8 +79,6 @@ Delete it to reset everything. Nothing else is written anywhere.
 
 ## Building from source
 
-Requires only Go 1.22+.
-
 ```
 git clone https://github.com/wortheydaniel/minesweeper
 cd minesweeper
@@ -82,25 +88,27 @@ go build ./cmd/minesweeper  # just your own OS, for quick iteration
 go run ./cmd/minesweeper    # build and run
 ```
 
-The build script is written in Go (not `make` or a shell script) so the same commands work in PowerShell, cmd, and bash. Release builds are static (`CGO_ENABLED=0`), so a binary built on Linux for Windows just works.
+The build script is written in Go (not `make` or a shell script) so the same commands work in PowerShell, cmd, and bash. Release builds use `CGO_ENABLED=0`, so a Windows `.exe` builds fine from Linux and vice versa.
 
 ## Testing
 
 ```
 go test ./...
+go run ./tools/checkdeps    # dependency rules
 ```
 
-Almost everything is testable without a terminal: `internal/engine` holds the rules, and `internal/tui` is a pipeline of pure steps (input bytes → events → model → screen grid → diff), so tests feed events in and assert on the resulting screen text. The input decoder also has a fuzz target (`go test -fuzz=FuzzDecode ./internal/tui`). On Linux, an integration test runs the real binary inside a pseudo-terminal and checks the terminal is restored afterwards. The Windows console layer can only be checked on a Windows machine — use the checklist in [SPEC §12](SPEC.md#12-acceptance-checklist).
+Nothing needs a display: `internal/engine` holds the rules, and `internal/ui` draws the whole game into an in-memory image, so tests feed it input and compare the result with golden PNGs in `testdata/` (regenerate deliberately with `go test ./internal/ui -update`). On Linux CI a smoke test opens the real window under a virtual X server: `xvfb-run ./minesweeper --smoke`. Behaviour on real Windows can only be checked by hand — use the checklist in [SPEC §12](SPEC.md#12-acceptance-checklist).
 
 ## Project layout
 
 ```
-cmd/minesweeper/     entry point: flags, wiring, exit codes
+cmd/minesweeper/     entry point: flags, wiring, error reporting
 internal/engine/     game rules — pure logic, no I/O, no clock, no global RNG
-internal/tui/        events, input decoder, model, view, renderer, themes — no OS calls
-internal/term/       the ONLY OS-specific code: raw mode, size, restore (term_linux.go, term_windows.go)
+internal/ui/         model, layout, menus, pixel font, sprites, software renderer — no display needed
+internal/shell/      the ONLY package that imports Ebitengine: window, input, presenting frames
 internal/store/      settings and best times (atomic JSON file)
 tools/build/         cross-platform build and release script
+tools/checkdeps/     dependency allowlist and confinement check
 SPEC.md              the specification (source of truth)
 ```
 
@@ -108,49 +116,47 @@ SPEC.md              the specification (source of truth)
 
 ## Maintaining this project
 
-**Spec first.** Behaviour and requirements are defined in [`SPEC.md`](SPEC.md). To change how the game behaves, edit the spec in the same commit as the code and cite requirement IDs (`G-10`, `TL-3`, …) in commit messages and tests.
+**Spec first.** Behaviour and requirements are defined in [`SPEC.md`](SPEC.md). To change how the game behaves, edit the spec in the same commit as the code and cite requirement IDs (`G-10`, `D-3`, …) in commit messages and tests.
 
 **Rules of the road** (each is enforced by CI or by review):
 
-- **No third-party dependencies, ever.** `go.mod` must have no `require` lines. If something seems to need a library, write the small piece of code instead. This keeps the project buildable with only Go and runnable with nothing at all (SPEC C-2, C-3).
-- **No network, no browser.** The game opens no sockets and launches nothing (SPEC C-5, C-6).
+- **One dependency: Ebitengine.** `go.mod` has exactly one direct `require`, pinned exactly; `tools/checkdeps` fails CI if any other third-party module gets compiled in (SPEC D-1, D-2). Need something else? Write the small piece of code, or change the spec first.
+- **Ebitengine stays in `internal/shell`.** Nothing else may import it, so the dependency can be replaced by rewriting one small package (SPEC D-3, D-5).
+- **The UI draws itself.** `internal/ui` renders to an `image.RGBA` with no display, fonts, or image files; sprites and the pixel font are Go source (SPEC A-2, A-3). Visual changes show up as golden-image diffs — review them, then regenerate.
 - **The engine stays pure.** `internal/engine` doesn't read the clock, touch the disk, or use package-level randomness; time and seed are injected (SPEC A-1).
-- **OS-specific code stays in `internal/term`.** Everything else must compile and pass tests on every platform. Never call `syscall` from `tui` (SPEC A-3, A-5).
-- **The terminal must always be restored.** Every exit path — quit, Ctrl+C, `SIGTERM`, panic — must undo raw mode, mouse reporting, and the alternate screen. A test checks this (SPEC TL-3, T-10); don't add an exit path that bypasses it.
 - **Seeds stay stable.** Changing mine placement changes every reproducible board. A golden test will fail if you do; only update it deliberately (SPEC G-5).
-- **Windows can't be tested from Linux.** Changes to `internal/term/term_windows.go` need a manual run on real Windows (SPEC R-1, §12).
+- **Upgrading Ebitengine is its own change.** Bump the pin, run `checkdeps`, and re-run the acceptance checklist on Windows *and* Linux (SPEC D-4). It also sets the minimum Go version (SPEC B-1).
+- **Windows can't be tested from Linux.** Changes to `internal/shell` need a manual run on real Windows (SPEC R-1, §12).
 
 **Common tasks**
 
 | Task | Where |
 |---|---|
-| Add a difficulty preset | Engine preset table (SPEC §5.1) → Difficulty dialog in `internal/tui` |
-| Add a setting | SPEC §8 schema → `internal/store` → Options dialog; give it a default so old `state.json` files still load |
+| Add a difficulty preset | Engine preset table (SPEC §5.1) → Game menu in `internal/ui` |
+| Add a setting | SPEC §8 schema → `internal/store` → Game menu; give it a default so old `state.json` files still load |
 | Change the `state.json` format | Bump `version`, keep a reader for the old one (SPEC P-6 covers unknown versions) |
-| Change symbols or colours | The glyph table and the palette in `internal/tui/theme.go` (SPEC U-5, U-6); check both glyph sets on both OSes |
-| Support a new key or mouse sequence | Decoder in `internal/tui` + a row in its test table (SPEC TL-4); keep the fuzz target green |
-| Raise the minimum Go version | `go.mod`, this README's Requirements table, SPEC N-5, and the CI matrix |
-| Cut a release | Update SPEC §13, tag `vX.Y.Z` and push the tag; the release workflow builds and uploads the binaries (SPEC B-5) |
+| Change colours, sprites, or layout | `internal/ui` (`layout.go`, sprite bitmaps, theme tables); regenerate golden images and review them |
+| Add a menu item or dialog | SPEC U-13…U-16 → `internal/ui`; add a golden image and a keyboard-navigation test |
+| Raise the minimum Go version | It follows Ebitengine's `go` directive; update `go.mod`, the Requirements above, SPEC B-1, and the CI matrix |
+| Cut a release | Update SPEC §13, tag `vX.Y.Z` and push the tag; the release workflow builds and uploads the binaries (SPEC B-6) |
 
 **Known limitations**
 
-- Needs a terminal; there is no graphical window (see SPEC §3 for why, and §14 for the option to add one).
-- Boards larger than the terminal can't be scrolled; enlarge the window.
+- **No screen-reader support.** The game is a custom-drawn window with no accessibility tree (SPEC U-18). It is fully keyboard-playable and scalable.
+- Linux needs a glibc system with X11/XWayland and OpenGL; Wayland *without* XWayland, and musl distros, are unsupported.
 - Binaries are unsigned, so Windows SmartScreen warns on first run.
 - Two copies running at once share one `state.json`; the last writer wins.
-- macOS is not supported in v1 (it builds but exits with "unsupported platform").
-- Linux: start it from a terminal; double-clicking in a file manager isn't supported.
+- macOS is not a target.
 
 **Troubleshooting**
 
 | Symptom | Cause / fix |
 |---|---|
-| "not a terminal" / exit code 2 | Output is piped or redirected, or `TERM` is unset/`dumb`. Run it directly in a terminal window. |
-| Boxes or `?` instead of symbols | The terminal font lacks the Unicode glyphs. Run with `--glyphs ascii`. |
-| Colours hard to read | Some terminal themes remap the basic colours. Try `--no-color`, or another theme. |
-| Mouse does nothing | The terminal isn't reporting the mouse: `tmux` needs `set -g mouse on`; the Linux text console has no mouse. Use the keyboard. |
-| "Terminal too small" | Enlarge the window to the size shown (Expert needs 63×23). |
-| Shell looks broken after a crash (no echo, garbage on click) | Run `reset` (Linux) or close and reopen the window. If it happens without a crash, that's a bug — the game must always restore the terminal. |
+| Linux: `no window system is available` | No display: run it inside a desktop session (or over `ssh -X`). |
+| Linux: `cannot open shared object file` / fails to start | Missing graphics libraries — install the packages listed under Requirements. |
+| Linux: blank or black window in a VM or remote desktop | No GPU acceleration. Try software rendering: `LIBGL_ALWAYS_SOFTWARE=1 ./minesweeper-…`. |
+| Window is tiny on a high-resolution screen | Use **Game → Scale**, or `--scale 3`. |
+| Windows: nothing appears | Check `%AppData%\minesweeper\`; startup errors appear in a message box. Report the text. |
 | Best times vanished | A corrupt `state.json` is renamed to `state.json.bad-<time>` and defaults are used; look for that file beside it. |
 
 ## License
