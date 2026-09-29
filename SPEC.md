@@ -2,10 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.3 — 2026-09-29 |
-| **Implementation** | Not started (see [§13 Milestones](#13-milestones)) |
+| **Status** | v0.4 — 2026-09-29 — implemented on Linux; Windows built but never run |
+| **Implementation** | Milestones M0–M4 done, M5 partly ([§13](#13-milestones)). Written to match this spec; where the code differs, this spec was updated and the reason is noted. |
 | **Audience** | Whoever builds or maintains this project. This file is the source of truth: change the spec first, then the code. |
-| **Changes from v0.2** | Dependencies are now allowed *if minimal* and a real window results. The terminal UI is replaced by a **native window** built on one library (Ebitengine), confined to a single package. The terminal design is preserved in git history (commit `659d62f`) as the zero-dependency fallback. §2, §3, §4, §6, §7, §9, §11 were rewritten. v0.1 (browser UI) was dropped earlier. |
+| **Changes from v0.3** | Updated after implementation to match what was built and measured: `Update` returns a quit flag; idle throttling instead of skipping `Draw`; menu without submenus; uppercase-only pixel font; measured sizes, CPU and memory. |
+| **Earlier changes (v0.2 → v0.3)** | Dependencies are now allowed *if minimal* and a real window results. The terminal UI is replaced by a **native window** built on one library (Ebitengine), confined to a single package. The terminal design is preserved in git history (commit `659d62f`) as the zero-dependency fallback. §2, §3, §4, §6, §7, §9, §11 were rewritten. v0.1 (browser UI) was dropped earlier. |
 
 Requirement keywords **MUST**, **SHOULD**, **MAY** follow RFC 2119. Every requirement has an ID (`C-1`, `G-4`, …) so tests, commits and reviews can cite it.
 
@@ -50,7 +51,7 @@ A clone of classic Windows Minesweeper that runs on **Windows and Linux** as a *
 
 Throwaway probe programs, run on the development machine (Linux + Xvfb X server), with Ebitengine v2.10.4:
 
-- **Builds with `CGO_ENABLED=0` for all four targets** (`linux`/`windows` × `amd64`/`arm64`) from a Linux machine — no C compiler, no headers. Windows probes built as GUI-subsystem programs (`-H windowsgui`). Binary sizes were roughly **9–13 MB**.
+- **Builds with `CGO_ENABLED=0` for all four targets** (`linux`/`windows` × `amd64`/`arm64`) from a Linux machine — no C compiler, no headers. Windows probes built as GUI-subsystem programs (`-H windowsgui`). Binary sizes were roughly **9–13 MB** for the probe; the finished game builds to **7.6–8.5 MB** stripped.
 - **Only five modules are compiled in:** `ebiten/v2`, `ebitengine/purego`, `ebitengine/hideconsole`, `golang.org/x/sys`, `golang.org/x/sync` — identical for the Linux and Windows builds. (A larger set appears in `go list -m all` but is not built into the binary.)
 - **It works as a real window on Linux.** Under Xvfb the window opened and rendered; reading pixels back from the X server showed exactly the colours drawn; **injected X11 mouse events — left, middle and right button — and a key press arrived at the correct coordinates.** That is everything the game needs from input, including the middle button for chording.
 - **Linux runtime needs:** the CGO-free binary is still dynamically linked to the system loader (**glibc**), and at runtime loads `libGL`, `libX11`, `libXcursor`, `libXrandr`, `libXinerama`, `libXi` and `libXxf86vm` (plus their own dependencies). These are present on desktop installs and absent on minimal/server installs.
@@ -105,9 +106,9 @@ Throwaway probe programs, run on the development machine (Linux + Xvfb X server)
 | ID | Requirement |
 |---|---|
 | A-1 | `internal/engine` **MUST** have no I/O, no `time` calls and no package-level randomness. The clock and RNG seed are injected, so every behaviour is testable and deterministic. |
-| A-2 | `internal/ui` is a pure function of its inputs: `Model.Update(Input) → Effects`, then `Model.Frame() → (*image.RGBA, dirty)`. `Input` is a plain struct (mouse position and buttons, keys pressed, typed characters, focus, time). The UI **MUST NOT** import Ebitengine, the OS, or the disk (persistence is reached through an interface). |
+| A-2 | `internal/ui` needs no display: `Model.Update(Input) → quit`, then `Model.Frame() → (*image.RGBA, changed)`. `Input` is a plain struct (mouse position and buttons, keys pressed, typed characters, focus, time). The UI **MUST NOT** import Ebitengine or the OS; it reaches the disk only through `internal/store`. |
 | A-3 | All drawing is done by `internal/ui` into an `image.RGBA` at **logical (unscaled) resolution**. The shell scales it to the window. There are **no image, font or sound files**: sprites and the pixel font are defined in Go source. |
-| A-4 | Package dependencies: `engine` and `store` import nothing from this repo; `ui` imports `engine` (and a `store` interface); `shell` imports `ui`; `cmd` imports `shell`, `ui`, `store`. |
+| A-4 | Package dependencies: `engine` and `store` import nothing from this repo; `ui` imports `engine` and `store`; `shell` imports `engine` and `ui`; `cmd` imports `shell`, `ui`, `store`. |
 | A-5 | The whole program is single-threaded from the UI's point of view: Ebitengine calls `Update` and `Draw` on one goroutine, and only they touch the `Model`. |
 
 ### Repository layout (target)
@@ -205,9 +206,9 @@ A fixed-size window that recreates the classic Windows look, drawn entirely by `
 | U-1 | **Classic style:** grey (#C0C0C0) panels; white/dark-grey bevels; hidden cells raised, revealed cells flat with a thin grid line; header panel with a 3-digit red-on-black seven-segment **mine counter** (left), **face button** (centre), and **timer** (right). Cells are **16×16 logical pixels**. All metrics live in one `layout.go`. |
 | U-2 | **Numbers 1–8** use the classic colours (1 blue #0000FF, 2 green #008000, 3 red #FF0000, 4 navy #000080, 5 maroon #800000, 6 teal #008080, 7 black, 8 grey #808080). Flags, mines, wrong-flags and question marks are distinct **shapes**, so colour is never the only signal. |
 | U-3 | **Face:** smiling by default; "surprised" while a mouse button is held on the board; "dead" (X eyes) after a loss; "cool" (sunglasses) after a win. Clicking it starts a new game with the current board. |
-| U-4 | **Text and sprites** come from a built-in pixel font (ASCII, defined in Go) and sprites defined as small bitmaps in Go source — no font, image, or asset files. |
+| U-4 | **Text and sprites** come from a built-in 5×7 pixel font (upper-case ASCII, digits and basic punctuation; lower-case input is shown as capitals) and sprites drawn in Go code — no font, image, or asset files. |
 | U-5 | **Themes:** `classic` (default) and `dark` (same layout, dark palette). `dark` **SHOULD** keep all text at WCAG AA contrast. |
-| U-6 | **Scale:** the logical frame is shown at an integer scale of 1×–4× with nearest-neighbour filtering, so pixels stay crisp. Default `auto` = the largest of 1×–4× not exceeding `round(2 × display scale factor)` that still lets the Expert window fit on the monitor; Options and `--scale N` override it. The window resizes itself when the board or scale changes. |
+| U-6 | **Scale:** the logical frame is shown at an integer scale of 1×–4× with nearest-neighbour filtering, so pixels stay crisp. Default `auto` = the monitor height in device-independent pixels divided by 540 (rounded down, 1–4), reduced until the window fits within 90 % of the monitor (so 1080p gives 2×); the Game menu and `--scale N` override it. The window resizes itself when the board or scale changes. |
 | U-7 | **Window:** title "Minesweeper"; not user-resizable; closing it quits; centred on first show. |
 
 ### Mouse
@@ -231,10 +232,10 @@ Menus and dialogs are drawn inside the window (the OS menu bar is not used), so 
 
 | ID | Requirement |
 |---|---|
-| U-13 | **Game menu:** New (`F2`) · Beginner · Intermediate · Expert · Custom… · *(separator)* · Marks `(?)` (checkbox) · Click number to chord (checkbox) · Theme › classic / dark · Scale › auto / 1× / 2× / 3× / 4× · *(separator)* · Best Times… · *(separator)* · Exit. The current difficulty is checked. **Help menu:** Controls… · About. |
+| U-13 | **Game menu:** New (`F2`) · Beginner · Intermediate · Expert · Custom… · *(separator)* · Marks `(?)` (checkbox) · Click number to chord (checkbox) · Theme: *classic/dark* (each click switches) · Scale: *auto/1X/2X/3X/4X* (each click cycles) · *(separator)* · Best Times… · *(separator)* · Exit. The current difficulty is checked. **Help menu:** Controls… · About. |
 | U-14 | **Custom…** has width, height and mines fields (`Tab` moves between them; digits and `Backspace` edit), with live validation against [G-1](#51-board-and-difficulty), and OK / Cancel. |
 | U-15 | **Best Times:** top 5 per preset, with a Reset button that asks for confirmation. |
-| U-16 | **End of game:** the face changes ([U-3](#look-and-layout)); on a top-5 win a name-entry dialog appears (printable ASCII, ≤ 20 characters, pre-filled with the last name; [P-4](#8-persistence)). The seed of the finished game **SHOULD** be shown in **About** or the end dialog so a board can be reproduced with `--seed`. |
+| U-16 | **End of game:** the face changes ([U-3](#look-and-layout)); on a top-5 win a name-entry dialog appears (printable ASCII, ≤ 20 characters, pre-filled with the last name; [P-4](#8-persistence)). The seed of the finished game is shown in **Help → About** so a board can be reproduced with `--seed`. |
 
 ### Accessibility (honest scope)
 
@@ -251,10 +252,10 @@ Menus and dialogs are drawn inside the window (the OS menu bar is not used), so 
 
 | ID | Requirement |
 |---|---|
-| W-1 | **Window:** create it at the size the `Model` requests (logical size × scale), set the title, disable user resizing, and resize (`SetWindowSize`) whenever the `Model` reports a new size. Closing the window or `Effects.Quit` ends the program with exit 0. |
+| W-1 | **Window:** create it at the size the `Model` requests (logical size × scale), set the title, disable user resizing, and resize (`SetWindowSize`) whenever the `Model`'s size or scale changes. Closing the window or the `Model` returning quit ends the program with exit 0. |
 | W-2 | **Input mapping:** each `Update`, build one `ui.Input` from Ebitengine: pointer position in logical pixels, left/middle/right button state, keys pressed this tick (with auto-repeat for arrows and `Backspace`), typed characters, and window focus. No Ebitengine types leak out of the package. |
-| W-3 | **Presentation:** when the `Model` reports the frame is dirty, upload the `*image.RGBA` to a texture and draw it scaled by an integer factor with nearest-neighbour filtering ([U-6](#look-and-layout)); otherwise draw nothing new. |
-| W-4 | **Idle cost:** the tick rate is capped at 30 per second and an unchanged frame is not re-uploaded. Target: under 2 % of one core when idle — **to be measured** at M3/M5; if Ebitengine cannot skip drawing cleanly, lower the idle tick rate instead. |
+| W-3 | **Presentation:** when the `Model` reports the frame changed, upload the `*image.RGBA` to a texture; every frame, draw that cached texture (Ebitengine scales it to the window). The default screen-clearing mode is kept, because Ebitengine does not promise that skipping `Draw` preserves the previous frame. |
+| W-4 | **Idle cost:** the tick rate stays at Ebitengine's default 60 per second (a lower rate could miss quick clicks between polls). When a frame is unchanged, `Draw` sleeps out the rest of a 25 ms budget, which has no effect on a vsynced desktop (frames are already longer) but stops a loop spinning where vsync is missing. **Measured** under a virtual X server with software OpenGL and no vsync (the worst case): 176 % of a core without the throttle, 18 % with it. A real GPU with vsync is expected to be far lower — confirm on hardware. |
 | W-5 | **Startup failure** (no display, no GL, etc.): on Linux print one clear line to stderr and exit 1; on Windows, where the GUI-subsystem build has no console, show a native message box (`user32!MessageBoxW` through the standard `syscall` package) and exit 1. `--help` and `--version` output uses the same two paths. |
 | W-6 | **`--smoke`:** open the window, run about 30 frames including one scripted click, exit 0; any initialisation failure exits non-zero. Used by CI on Linux under a virtual X server (`xvfb-run`). |
 | W-7 | The timer runs on the engine's monotonic clock, so it is unaffected if the window stops updating while minimised or unfocused. |
@@ -304,8 +305,8 @@ Exit codes: `0` normal, `1` runtime or startup error, `2` usage error.
 |---|---|
 | N-1 | **Startup:** window visible within 1 s of launch on modest hardware. |
 | N-2 | **Responsiveness:** click → repainted result under 50 ms on the largest board (50×30). Engine reveal with full flood fill under 5 ms. |
-| N-3 | **Size:** each release binary ≤ 20 MB (the probe measured roughly 9–13 MB before game code). |
-| N-4 | **Memory:** target under 100 MB resident (a budget to confirm at M5, not yet measured). |
+| N-3 | **Size:** each release binary ≤ 20 MB (**measured** 7.6–8.5 MB). |
+| N-4 | **Memory:** under 150 MB resident (**measured** 126 MB under software OpenGL, which inflates it; expect less with a GPU driver). |
 | N-5 | **Supported systems:** Windows 10+ with a DirectX-capable graphics stack; Linux on a **glibc** distribution with X11 or XWayland, OpenGL, and the libraries listed in [§3.1](#31-what-was-verified-before-choosing-this). musl-based distros (e.g. Alpine) are unsupported. |
 | N-6 | **Strings:** all user-visible text lives in one `strings` table so a later translation touches one place. |
 
@@ -371,12 +372,12 @@ Update the checkboxes here (and the README status line) as work lands. The order
 
 | | Milestone | Exit criteria |
 |---|---|---|
-| [ ] | **M0 Scaffold** | `go.mod` (one require, exact pin), `cmd/minesweeper` prints `--version`, `tools/checkdeps`, CI green on Ubuntu + Windows, cross-builds for all four targets. |
-| [ ] | **M1 Engine** | §5 fully implemented; T-1 … T-4 pass; coverage ≥ 95 %. |
-| [ ] | **M2 Window proof** | `internal/shell` + a minimal `ui` that renders a grid to an RGBA image and reports clicks/keys. T-8, T-9 pass; **verified by hand on real Windows 10 and 11 and on Linux X11 and Wayland — R-1 closed, or the shell is adapted.** |
-| [ ] | **M3 Playable game** | Pixel font, sprites, LED digits, classic rendering, core play (reveal, flag, chord, win/lose, counters, face), keyboard and mouse gestures, scale; T-5, T-6 pass; idle CPU measured (W-4). |
-| [ ] | **M4 Full UI + persistence** | Menus and all dialogs (U-13 … U-16), themes, Custom, Best Times, §8; T-7 passes. |
-| [ ] | **M5 Release** | `go run ./tools/build` produces all four binaries + `SHA256SUMS`; release workflow on tags; NFRs measured; §12 checklist passed; README screenshots. |
+| [~] | **M0 Scaffold** | `go.mod` (one require, exact pin), `--version`, `tools/checkdeps` and cross-builds for all four targets: **done**. `.github/workflows/ci.yml`: **written but never run — confirm it goes green on Ubuntu + Windows.** |
+| [x] | **M1 Engine** | §5 fully implemented; T-1 … T-4 pass. Coverage **measured 94.5 %**, just under the 95 % target. |
+| [~] | **M2 Window proof** — done on Linux (`--smoke` under Xvfb, screenshot checked); **Windows and Wayland still to be tried by hand** | `internal/shell` + a minimal `ui` that renders a grid to an RGBA image and reports clicks/keys. T-8, T-9 pass; **verified by hand on real Windows 10 and 11 and on Linux X11 and Wayland — R-1 closed, or the shell is adapted.** |
+| [x] | **M3 Playable game** | Pixel font, sprites, LED digits, classic rendering, core play (reveal, flag, chord, win/lose, counters, face), keyboard and mouse gestures, scale; T-5, T-6 pass; idle CPU measured (W-4). |
+| [x] | **M4 Full UI + persistence** | Menus and all dialogs (U-13 … U-16), themes, Custom, Best Times, §8; T-7 passes. |
+| [~] | **M5 Release** — `tools/build` (all four targets + `SHA256SUMS`) and `tools/checkdeps` done; CI file written but never run; **release-on-tag workflow, real-hardware checks (§12) and screenshots not done** | `go run ./tools/build` produces all four binaries + `SHA256SUMS`; release workflow on tags; NFRs measured; §12 checklist passed; README screenshots. |
 
 ### Build and release (M0 / M5)
 

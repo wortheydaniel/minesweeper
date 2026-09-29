@@ -2,10 +2,7 @@
 
 Classic Minesweeper for **Windows and Linux**, as a native desktop window with the classic look. One downloaded file — no installer, no browser, no runtime.
 
-> **Status: specification stage — no code yet.**
-> The design is finished and lives in [`SPEC.md`](SPEC.md); implementation is tracked by the milestones in [SPEC §13](SPEC.md#13-milestones). Everything below describes the **intended** interface. The commands will work once milestone M5 lands; until then, treat this README as the contract the code must meet.
->
-> Current milestone: **M0 — not started**
+> **Status: playable, Linux-tested.** The game is implemented as specified in [`SPEC.md`](SPEC.md) and all automated tests pass. It has been run for real on Linux under a virtual X server: the window opens, the self-test's scripted click plays, and a screenshot of the running window was checked. Physical mouse and keyboard input has not been tried with the finished game (an earlier probe showed Ebitengine delivers all three mouse buttons and keys correctly on X11). **The Windows build compiles but has never been run** — no Windows machine was available — so treat Windows as untested until you try it. CI is written but hasn't run yet. See [SPEC §13](SPEC.md#13-milestones) for what's left.
 
 ## Requirements
 
@@ -30,7 +27,7 @@ Alpine and other musl-based distributions are not supported. There is no Python,
 
 ## Quick start
 
-Download the file for your system from the Releases page, then:
+Build it (see below) or, once releases exist, download the file for your system from the Releases page. Then:
 
 **Windows** — double-click `minesweeper-<version>-windows-amd64.exe`. Windows SmartScreen may warn about an unrecognised app because the binary is unsigned: choose *More info → Run anyway*.
 
@@ -54,7 +51,7 @@ Reveal every square that isn't a mine. A number tells you how many of the 8 neig
 | Menu | Click **Game** / **Help** | `F10` |
 | Cancel a menu or dialog | — | `Esc` |
 
-Difficulties: **Beginner** 9×9/10 mines, **Intermediate** 16×16/40, **Expert** 30×16/99, or **Custom**. Best times are kept for the top 5 on each preset. The window size (1×–4×), theme (classic or dark), question marks, and click-to-chord are in the **Game** menu.
+Difficulties: **Beginner** 9×9/10 mines, **Intermediate** 16×16/40, **Expert** 30×16/99, or **Custom**. Best times are kept for the top 5 on each preset. The **Game** menu also has question marks, click-to-chord, the theme (classic or dark; each click switches), and the window scale (auto, 1×–4×; each click cycles). **Help → About** shows the seed of the last finished game.
 
 ## Command-line options
 
@@ -63,7 +60,7 @@ Difficulties: **Beginner** 9×9/10 mines, **Intermediate** 16×16/40, **Expert**
 | `--scale N` | auto | Window scale 1–4 for this run. |
 | `--data-dir PATH` | per-user config dir | Where settings and best times are stored. `--data-dir .` makes a portable install. |
 | `--seed N` | random | Reproducible boards, useful for bug reports and tests. |
-| `--smoke` | off | Self-test: open the window, run a few frames, exit (used by CI). |
+| `--smoke` | off | Self-test: open the window, click once, run a few frames, exit 0 on success (used by CI). |
 | `--version`, `--help` | | Show and exit. On Windows these appear in a message box, because the program has no console. |
 
 ## Where your data goes
@@ -97,7 +94,7 @@ go test ./...
 go run ./tools/checkdeps    # dependency rules
 ```
 
-Nothing needs a display: `internal/engine` holds the rules, and `internal/ui` draws the whole game into an in-memory image, so tests feed it input and compare the result with golden PNGs in `testdata/` (regenerate deliberately with `go test ./internal/ui -update`). On Linux CI a smoke test opens the real window under a virtual X server: `xvfb-run ./minesweeper --smoke`. Behaviour on real Windows can only be checked by hand — use the checklist in [SPEC §12](SPEC.md#12-acceptance-checklist).
+Almost nothing needs a display: `internal/engine` holds the rules, and `internal/ui` draws the whole game into an in-memory image, so tests feed it input and compare the result with golden PNGs in `internal/ui/testdata/` (regenerate deliberately with `go test ./internal/ui -update`, then look at the images). On Linux CI a smoke test opens the real window under a virtual X server: `xvfb-run ./minesweeper --smoke`. Behaviour on real Windows can only be checked by hand — use the checklist in [SPEC §12](SPEC.md#12-acceptance-checklist).
 
 ## Project layout
 
@@ -111,8 +108,6 @@ tools/build/         cross-platform build and release script
 tools/checkdeps/     dependency allowlist and confinement check
 SPEC.md              the specification (source of truth)
 ```
-
-*(Directories appear as their milestones land.)*
 
 ## Maintaining this project
 
@@ -156,7 +151,7 @@ SPEC.md              the specification (source of truth)
 | Linux: `cannot open shared object file` / fails to start | Missing graphics libraries — install the packages listed under Requirements. |
 | Linux: blank or black window in a VM or remote desktop | No GPU acceleration. Try software rendering: `LIBGL_ALWAYS_SOFTWARE=1 ./minesweeper-…`. |
 | Window is tiny on a high-resolution screen | Use **Game → Scale**, or `--scale 3`. |
-| Windows: nothing appears | Check `%AppData%\minesweeper\`; startup errors appear in a message box. Report the text. |
+| Windows: nothing appears | Startup errors appear in a message box. This build has never been run on Windows, so please report what you see. |
 | Best times vanished | A corrupt `state.json` is renamed to `state.json.bad-<time>` and defaults are used; look for that file beside it. |
 
 ## License
